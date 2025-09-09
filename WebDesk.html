@@ -181,7 +181,7 @@ function createWindow(title='Нове вікно',content='<!doctype html><meta 
 
   win.style.display='block';
   const offset=(winCounter-1)*28 + taskbarHeight;
-  win.style.top='0px';
+  win.style.top=offset+'px';
   win.style.left='0px';
   win.style.zIndex=++zIndexCounter;
 
@@ -324,3 +324,4 @@ function createWindow(title='Нове вікно',content='<!doctype html><meta 
 </script>
 </body>
 </html>
+
