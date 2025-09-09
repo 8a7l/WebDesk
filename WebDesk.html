@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="UTF-8">
+<title>WebDesk</title>
+<style>
+html, body { margin:0; padding:0; height:100%; font-family:sans-serif; }
+* { box-sizing:border-box; }
+body { background:#2c3e50; color:#ecf0f1; overflow:hidden; transition: all 0.3s; }
+body.light { background:#f0f0f0; color:#222; }
+
+#taskbar {
+  position:fixed; top:0; left:0; width:100%; height:40px;
+  background:#34495e; display:flex; align-items:center; padding:0 5px; z-index:1000;
+  transition: background 0.3s;
+}
+body.light #taskbar { background:#dcdcdc; }
+
+#startBtn {
+  background:#0078d7; border:none; color:white; padding:5px 15px;
+  cursor:pointer; font-weight:bold; border-radius:4px; flex-shrink:0;
+  transition: background 0.3s, color 0.3s;
+}
+body.light #startBtn { background:#4a90e2; color:white; }
+
+#startMenu {
+  position:absolute; top:40px; left:5px; background:#333; border:1px solid #444;
+  border-radius:6px; box-shadow:0 0 10px rgba(0,0,0,0.5); display:none; flex-direction:column;
+  padding:10px; width:250px; z-index:1001; transition: background 0.3s, color 0.3s;
+}
+#startMenu.active { display:flex; }
+body.light #startMenu { background:#fff; border-color:#ccc; color:#222; }
+.menu-item { margin:5px 0; }
+
+#fileInput { width:100%; padding:5px; border-radius:4px; border:1px solid #666;
+  background:#555; color:white; transition: background 0.3s, color 0.3s;
+}
+body.light #fileInput { background:#f0f0f0; color:#222; border:1px solid #ccc; }
+
+.window {
+  position:absolute; background:#ecf0f1; border:2px solid #7f8c8d;
+  width:400px; height:300px; display:none; box-shadow:2px 2px 10px rgba(0,0,0,0.5);
+  transition: all 0.3s ease, background 0.3s, color 0.3s; overflow:hidden;
+}
+body.dark .window { background:#444; color:#ecf0f1; border-color:#666; }
+.window.active { border-color:#1abc9c; box-shadow:0 0 15px #1abc9c; }
+
+.window-header {
+  background:#34495e; color:#ecf0f1; cursor:move; display:flex;
+  justify-content:space-between; align-items:center; height:30px; line-height:30px;
+  padding:0 5px; user-select:none; transition: background 0.3s, color 0.3s;
+}
+body.light .window-header { background:#bbb; color:#222; }
+.window-header .buttons span { cursor:pointer; margin-left:5px; font-weight:bold; transition: all 0.2s; }
+
+.iframe-container { width:100%; border:none; display:block; height:calc(100% - 30px); background:white; }
+body.dark .iframe-container { background:#666; color:white; }
+
+.task-icon { margin-left:5px; background:#7f8c8d; color:#fff;
+  padding:5px 10px; cursor:pointer; border-radius:3px; user-select:none; transition: all 0.2s;
+}
+.task-icon.active { background:#1abc9c; }
+body.light .task-icon { background:#ccc; color:#222; }
+body.light .task-icon.active { background:#1abc9c; color:#fff; }
+
+.window .resizer {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  background: transparent;
+  z-index: 10;
+}
+
+.window .resizer.top-left { top:-5px; left:-5px; cursor: nwse-resize; }
+.window .resizer.top-right { top:-5px; right:-5px; cursor: nesw-resize; }
+.window .resizer.bottom-left { bottom:-5px; left:-5px; cursor: nesw-resize; }
+.window .resizer.bottom-right { bottom:-5px; right:-5px; cursor: nwse-resize; }
+
+.window .resizer.top { top:-5px; left:10px; right:10px; height:10px; cursor: ns-resize; }
+.window .resizer.bottom { bottom:-5px; left:10px; right:10px; height:10px; cursor: ns-resize; }
+.window .resizer.left { top:10px; bottom:10px; left:-5px; width:10px; cursor: ew-resize; }
+.window .resizer.right { top:10px; bottom:10px; right:-5px; width:10px; cursor: ew-resize; }
+
+</style>
+</head>
+<body class="dark">
+
+<div id="taskbar">
+  <button id="startBtn">Старт</button>
+</div>
+
+<div id="startMenu">
+  <div class="menu-item">
+    <label for="fileInput">Завантажити HTML-файл:</label>
+    <input type="file" id="fileInput" accept=".html">
+  </div>
+  <div class="menu-item">
+    <button id="themeBtn">Світла / Темна тема</button>
+  </div>
+</div>
+
+<div id="desktop"></div>
+
+<script>
+let zIndexCounter=1, winCounter=0;
+const desktop=document.getElementById('desktop');
+const taskbar=document.getElementById('taskbar');
+const startBtn=document.getElementById('startBtn');
+const startMenu=document.getElementById('startMenu');
+const fileInput=document.getElementById('fileInput');
+const themeBtn=document.getElementById('themeBtn');
+const windows={};
+const headerHeight=30;
+const taskbarHeight=40;
+
+function findWinIdByElement(winEl){
+  return Object.keys(windows).find(id=>windows[id].win===winEl) || null;
+}
+
+function makeDraggable(win){
+  const header=win.querySelector('.window-header');
+  let offsetX=0, offsetY=0, isDown=false;
+  header.addEventListener('mousedown',e=>{
+    isDown=true;
+    const rect=win.getBoundingClientRect();
+    offsetX=e.clientX-rect.left;
+    offsetY=e.clientY-rect.top;
+    win.style.zIndex=++zIndexCounter;
+    setActiveWindow(win);
+  });
+  document.addEventListener('mousemove',e=>{
+    if(!isDown) return;
+    let left=e.clientX-offsetX;
+    let top=e.clientY-offsetY;
+    left=Math.max(0,Math.min(left,desktop.clientWidth-win.offsetWidth));
+    top=Math.max(taskbarHeight, Math.min(top,desktop.clientHeight-win.offsetHeight));
+    win.style.left=left+'px';
+    win.style.top=top+'px';
+  });
+  document.addEventListener('mouseup',()=>{isDown=false;});
+}
+
+function setActiveWindow(win){
+  Object.values(windows).forEach(w=>w.win.classList.remove('active'));
+  Object.values(windows).forEach(w=>w.icon.classList.remove('active'));
+  const id=findWinIdByElement(win);
+  if(!id) return;
+  windows[id].win.classList.add('active');
+  windows[id].icon.classList.add('active');
+}
+
+startBtn.addEventListener('click',()=>{ startMenu.classList.toggle('active'); });
+document.addEventListener('click',e=>{ if(!startMenu.contains(e.target)&&!startBtn.contains(e.target)) startMenu.classList.remove('active'); });
+
+fileInput.addEventListener('change',()=>{
+  const file=fileInput.files[0];
+  if(!file) return;
+  const reader=new FileReader();
+  reader.onload=e=>createWindow(file.name,e.target.result);
+  reader.readAsText(file);
+  fileInput.value='';
+});
+
+themeBtn.addEventListener('click',()=>{
+  document.body.classList.toggle('light');
+  document.body.classList.toggle('dark');
+});
+
+function createWindow(title='Нове вікно',content='<!doctype html><meta charset="utf-8"><body><p>Порожнє</p></body>'){
+  winCounter++;
+  const win=document.createElement('div');
+  win.className='window';
+
+  // додаємо ресайзери
+  const resizers = ['top-left','top-right','bottom-left','bottom-right','top','right','bottom','left'];
+  resizers.forEach(r=>{
+    const div = document.createElement('div');
+    div.className = 'resizer ' + r;
+    win.appendChild(div);
+  });
+
+  win.style.display='block';
+  const offset=(winCounter-1)*28 + taskbarHeight;
+  win.style.top='0px';
+  win.style.left='0px';
+  win.style.zIndex=++zIndexCounter;
+
+  const header=document.createElement('div');
+  header.className='window-header';
+  header.innerHTML=`<span style="user-select:none">${title}</span>
+    <div class="buttons">
+      <span class="minimize" title="Згорнути">━</span>
+      <span class="maximize" title="Розгорнути">⬜</span>
+      <span class="close-btn" title="Закрити">✖</span>
+    </div>`;
+  win.appendChild(header);
+
+  const iframe=document.createElement('iframe');
+  iframe.className='iframe-container';
+  iframe.srcdoc=content;
+  iframe.style.height=`calc(100% - ${headerHeight}px)`;
+  win.appendChild(iframe);
+
+  desktop.appendChild(win);
+
+  const icon=document.createElement('div');
+  icon.className='task-icon';
+  icon.innerText=title;
+  taskbar.insertBefore(icon, startBtn.nextSibling);
+
+  const winId=Date.now()+Math.random();
+  windows[winId]={win,icon,minimized:false,maximized:false};
+
+  makeDraggable(win);
+  setActiveWindow(win);
+
+  // кнопки вікна
+  header.querySelector('.close-btn').addEventListener('click',()=>{
+    if(windows[winId]){
+      desktop.removeChild(windows[winId].win);
+      taskbar.removeChild(windows[winId].icon);
+      delete windows[winId];
+    }
+  });
+
+  header.querySelector('.minimize').addEventListener('click',()=>{
+    if(!windows[winId]) return;
+    const w=windows[winId].win;
+    w.style.display='none';
+    windows[winId].minimized=true;
+  });
+
+  header.querySelector('.maximize').addEventListener('click',()=>{
+    if(!windows[winId]) return;
+    const w=windows[winId].win;
+    if(!windows[winId].maximized){
+      w.dataset.prevLeft=w.style.left;
+      w.dataset.prevTop=w.style.top;
+      w.dataset.prevWidth=w.style.width||w.offsetWidth+'px';
+      w.dataset.prevHeight=w.style.height||w.offsetHeight+'px';
+      w.style.left='0'; w.style.top=taskbarHeight+'px';
+      w.style.width='100%'; w.style.height=`calc(100% - ${taskbarHeight}px)`;
+      windows[winId].maximized=true;
+      w.style.zIndex=++zIndexCounter;
+      setActiveWindow(w);
+    } else {
+      w.style.left=w.dataset.prevLeft;
+      w.style.top=w.dataset.prevTop;
+      w.style.width=w.dataset.prevWidth;
+      w.style.height=w.dataset.prevHeight;
+      windows[winId].maximized=false;
+      setActiveWindow(w);
+    }
+  });
+
+  icon.addEventListener('click',()=>{
+    if(!windows[winId]) return;
+    const w=windows[winId].win;
+    if(windows[winId].minimized){
+      w.style.display='block';
+      windows[winId].minimized=false;
+      w.style.zIndex=++zIndexCounter;
+      setActiveWindow(w);
+    } else {
+      w.style.display='none';
+      windows[winId].minimized=true;
+    }
+  });
+
+  win.addEventListener('mousedown',()=>setActiveWindow(win));
+
+  // ==== Ресайз вікна ====
+  let currentResizer;
+  const resizerEls = win.querySelectorAll('.resizer');
+
+  resizerEls.forEach(resizer => {
+    resizer.addEventListener('mousedown', e => {
+      e.preventDefault();
+      currentResizer = resizer;
+      document.addEventListener('mousemove', resizeWindow);
+      document.addEventListener('mouseup', stopResize);
+    });
+  });
+
+  function resizeWindow(e){
+    if(!currentResizer) return;
+    const rect = win.getBoundingClientRect();
+
+    if(currentResizer.classList.contains('bottom-right')){
+      win.style.width = e.clientX - rect.left + 'px';
+      win.style.height = e.clientY - rect.top + 'px';
+    } else if(currentResizer.classList.contains('bottom-left')){
+      win.style.width = rect.right - e.clientX + 'px';
+      win.style.height = e.clientY - rect.top + 'px';
+      win.style.left = e.clientX + 'px';
+    } else if(currentResizer.classList.contains('top-right')){
+      win.style.width = e.clientX - rect.left + 'px';
+      win.style.height = rect.bottom - e.clientY + 'px';
+      win.style.top = e.clientY + 'px';
+    } else if(currentResizer.classList.contains('top-left')){
+      win.style.width = rect.right - e.clientX + 'px';
+      win.style.height = rect.bottom - e.clientY + 'px';
+      win.style.top = e.clientY + 'px';
+      win.style.left = e.clientX + 'px';
+    } else if(currentResizer.classList.contains('right')){
+      win.style.width = e.clientX - rect.left + 'px';
+    } else if(currentResizer.classList.contains('left')){
+      win.style.width = rect.right - e.clientX + 'px';
+      win.style.left = e.clientX + 'px';
+    } else if(currentResizer.classList.contains('bottom')){
+      win.style.height = e.clientY - rect.top + 'px';
+    } else if(currentResizer.classList.contains('top')){
+      win.style.height = rect.bottom - e.clientY + 'px';
+      win.style.top = e.clientY + 'px';
+    }
+  }
+
+  function stopResize(){
+    document.removeEventListener('mousemove', resizeWindow);
+    document.removeEventListener('mouseup', stopResize);
+    currentResizer = null;
+  }
+}
+</script>
+</body>
+</html>
